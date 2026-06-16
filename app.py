@@ -25,12 +25,19 @@ with tab1:
         st.subheader("டேட்டா பிரிவியூ (Data Preview)")
         st.dataframe(raw_data.tail()) 
 
+        # 🌟 NEW: Auto-detect stock name from file name
+        default_stock_name = uploaded_file.name.replace('.csv', '').replace('.CSV', '')
+        stock_name = st.text_input("ஸ்டாக்கின் பெயர் (Stock Name):", value=default_stock_name)
+
         column_to_forecast = st.selectbox("எந்த காலத்தை கணிப்பீட்டிற்கு பயன்படுத்த வேண்டும்?", raw_data.columns)
         forecast_length = st.slider("எத்தனை கேண்டில்களை கணிக்க வேண்டும்? (Horizon):", min_value=10, max_value=100, value=20, step=10)
 
         if st.button("கணிப்பை தொடங்குக (Run Forecast)"):
             with st.spinner('TimesFM மாடல் தரவை பகுப்பாய்வு செய்கிறது...'):
                 try:
+                    # கணிப்பு செய்த நேரத்தை துல்லியமாக எடுத்தல் (Predicted Time)
+                    predicted_time_str = datetime.now().strftime("%d-%b %I:%M %p")
+                    
                     data = raw_data.dropna(subset=[column_to_forecast]).copy()
                     
                     time_col = None
@@ -58,25 +65,18 @@ with tab1:
                     pct_change = ((final_forecast_price - last_historical_price) / last_historical_price) * 100
                     
                     if pct_change > 0.5:
-                        interpretation = "BULLISH (Upward Trend Momentum)"
-                        alert_color = "success"
+                        interpretation = "BULLISH (Upward Trend)"
                         box_color = "#d4edda"
                     elif pct_change < -0.5:
-                        interpretation = "BEARISH (Downward Selling Pressure)"
-                        alert_color = "error"
+                        interpretation = "BEARISH (Downward Trend)"
                         box_color = "#f8d7da"
                     else:
-                        interpretation = "SIDEWAYS (Consolidation / Rangebound)"
-                        alert_color = "warning"
+                        interpretation = "SIDEWAYS (Consolidation)"
                         box_color = "#fff3cd"
                     
-                    # ஸ்கிரீனில் தகவலைக் காட்டுதல்
-                    st.markdown(f"### **AI Interpretation View:**")
-                    if alert_color == "success": st.success(f"📈 **{interpretation}** | எதிர்பார்க்கப்படும் மாற்றம்: **+{pct_change:.2f}%**")
-                    elif alert_color == "error": st.error(f"📉 **{interpretation}** | எதிர்பார்க்கப்படும் மாற்றம்: **{pct_change:.2f}%**")
-                    else: st.warning(f"⚖️ **{interpretation}** | எதிர்பார்க்கப்படும் மாற்றம்: **{pct_change:.2f}%**")
-                    
                     # --- டைம்லைன் உருவாக்கம் ---
+                    target_time_str = f"T+{forecast_length}" 
+                    
                     if time_col:
                         data[time_col] = pd.to_datetime(data[time_col], errors='coerce')
                         data = data.dropna(subset=[time_col]) 
@@ -91,13 +91,19 @@ with tab1:
                         future_times = []
                         for i in range(1, forecast_length + 1):
                             next_time = last_known_time + (time_interval * i)
-                            future_times.append(next_time.strftime("%d-%b %H:%M"))
+                            # 12-Hour பார்மேட்டில் AM/PM உடன் மாற்றுதல்
+                            future_times.append(next_time.strftime("%d-%b %I:%M %p"))
                             
-                        all_times_labels = historical_times + future_times
+                        all_times_labels = [pd.to_datetime(t).strftime("%d-%b %H:%M") for t in last_50_data[time_col]] + [pd.to_datetime(t).strftime("%d-%b %H:%M") for t in future_times]
+                        target_time_str = future_times[-1] 
                     else:
                         last_50_data = data.tail(50)
                         plot_historical_prices = last_50_data[column_to_forecast].values
                         all_times_labels = [str(i) for i in range(50 + forecast_length)]
+                    
+                    # ஸ்கிரீனில் முக்கிய சிக்னலைக் காட்டுதல்
+                    st.markdown(f"### **AI Interpretation View:**")
+                    st.info(f"🔮 **Stock:** {stock_name.upper()} | **Predicted At:** {predicted_time_str} | **Target Time:** {target_time_str}")
                     
                     # --- சார்ட் வரைதல் ---
                     fig, ax = plt.subplots(figsize=(12, 6))
@@ -107,8 +113,16 @@ with tab1:
                     connected_y_values = [plot_historical_prices[-1]] + list(forecast_values)
                     ax.plot(connected_x_values, connected_y_values, label=f"TimesFM Forecast (Next {forecast_length})", color='red', linestyle='dashed', marker='o', markersize=4)
                     
-                    # 🌟 சார்ட்டின் உள்ளே பாக்ஸ் வைக்கும் மேஜிக் (Chart Interpretation Box)
-                    info_text = f"AI View: {interpretation}\nLast Close: {last_historical_price:.2f}\nProj. Target: {final_forecast_price:.2f}\nEst. Change: {pct_change:.2f}%"
+                    # 🌟 சார்ட்டின் உள்ளே இருக்கும் பாக்ஸில் நீங்கள் கேட்ட அனைத்து விபரங்களும் 🌟
+                    info_text = (
+                        f"Stock: {stock_name.upper()}\n"
+                        f"Predicted: {predicted_time_str}\n"
+                        f"AI View: {interpretation}\n"
+                        f"Last Close: {last_historical_price:.2f}\n"
+                        f"Proj. Target: {final_forecast_price:.2f}\n"
+                        f"Target Time: {target_time_str}\n"
+                        f"Est. Change: {pct_change:.2f}%"
+                    )
                     ax.text(0.02, 0.95, info_text, transform=ax.transAxes, verticalalignment='top', fontsize=10, fontweight='bold',
                             bbox=dict(boxstyle='round,pad=0.5', facecolor=box_color, alpha=0.9, edgecolor='gray'))
                     
@@ -118,7 +132,7 @@ with tab1:
                     ax.set_xticks(tick_positions)
                     ax.set_xticklabels(tick_labels, rotation=45, ha='right', fontsize=9)
                     
-                    ax.set_title(f"{column_to_forecast} - Future Forecast with Interpretation", fontsize=14, fontweight='bold')
+                    ax.set_title(f"{stock_name.upper()} ({column_to_forecast}) - AI Future Forecast", fontsize=14, fontweight='bold')
                     ax.set_xlabel("Timeline (Date & Time)")
                     ax.set_ylabel("Price")
                     ax.legend(loc="lower left")
@@ -127,12 +141,15 @@ with tab1:
                     
                     st.pyplot(fig)
                     
-                    # 🌟 ஹிஸ்டரியை CSV ஃபைலில் சேமிக்கும் பகுதி (Save History to File)
+                    # 🌟 ஹிஸ்டரியிலும் ஸ்டாக் பெயர் மற்றும் கணித்த நேரத்தைச் சேமித்தல்
                     history_entry = pd.DataFrame([{
                         "Run_Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "Stock_Name": stock_name.upper(),
+                        "Predicted_At": predicted_time_str,
                         "Asset_Column": column_to_forecast,
                         "Last_Close": round(last_historical_price, 2),
                         "AI_Target_Price": round(final_forecast_price, 2),
+                        "Target_Timeline": target_time_str,
                         "Expected_Change_Pct": round(pct_change, 2),
                         "AI_Signal": interpretation,
                         "Horizon_Candles": forecast_length
@@ -149,16 +166,12 @@ with tab1:
 # ----------------- TAB 2: HISTORY LOG VIEW -----------------
 with tab2:
     st.subheader("📜 சேமிக்கப்பட்ட வரலாற்று கணிப்புகள் (Saved Predictions Log)")
-    st.write("நீங்கள் செய்த முந்தைய கணிப்புகளின் விவரங்கள் மற்றும் முடிவுகள் கீழே பட்டியலிடப்பட்டுள்ளன:")
-    
     if os.path.isfile(HISTORY_FILE):
         history_df = pd.read_csv(HISTORY_FILE)
-        # புதிய கணிப்புகள் மேலே தெரியும்படி தலைகீழாக மாற்றுதல் (Latest First)
         st.dataframe(history_df.iloc[::-1], use_container_width=True)
         
-        # ஹிஸ்டரியை கிளியர் செய்ய ஒரு பட்டன்
         if st.button("வரலாற்றை அழிக்கவும் (Clear History Logs)"):
             os.remove(HISTORY_FILE)
             st.success("அனைத்து வரலாற்றுப் பதிவுகளும் வெற்றிகரமாக அழிக்கப்பட்டன! பக்கத்தை புதுப்பிக்கவும்.")
     else:
-        st.info("இன்னும் எந்த கணிப்பு வரலாறும் சேமிக்கப்படவில்லை. புதிய கணிப்பைத் தொடங்கும்போது அது இங்கே பதிவாகும்!")
+        st.info("இன்னும் எந்த கணிப்பு வரலாறும் சேமிக்கப்படவில்லை.")
