@@ -11,8 +11,7 @@ HISTORY_FILE = "trading_forecast_history.csv"
 # இந்திய நேரத்தை (IST) செட் செய்தல்
 IST = timezone(timedelta(hours=5, minutes=30))
 
-# 🌟 🌟 🌟 SMART CACHE ENGINE 🌟 🌟 🌟
-# இந்த பங்க்ஷன் மாடலை ஒரே ஒரு முறை மட்டும் மெமரியில் ஏற்றி பாதுகாக்கும்.
+# SMART CACHE ENGINE
 @st.cache_resource
 def load_timesfm_model(horizon_len):
     hparams = timesfm.TimesFmHparams(context_len=512, horizon_len=horizon_len, backend="cpu")
@@ -41,136 +40,143 @@ with tab1:
         default_stock_name = uploaded_file.name.replace('.csv', '').replace('.CSV', '')
         stock_name = st.text_input("ஸ்டாக்கின் பெயர் (Stock Name):", value=default_stock_name)
 
-        column_to_forecast = st.selectbox("எந்த காலத்தை கணிப்பீட்டிற்கு பயன்படுத்த வேண்டும்?", raw_data.columns)
+        # 🌟 🌟 🌟 FIX: வெறும் எண்கள் உள்ள காலம்களை (Numeric Columns) மட்டுமே வடிகட்டி எடுத்தல் 🌟 🌟 🌟
+        numeric_cols = raw_data.select_dtypes(include=['number']).columns.tolist()
         
-        # ⚠️ ரேம் பாதுகாப்பிற்காக ஸ்லைடர் மதிப்பை நிலையானதாக மாற்றுவது சிறந்தது (உ-ம்: 20 அல்லது 50)
-        forecast_length = st.slider("எத்தனை கேண்டில்களை கணிக்க வேண்டும்? (Horizon):", min_value=10, max_value=100, value=20, step=10)
+        if not numeric_cols:
+            st.error("உங்கள் CSV ஃபைலில் எண்கள் உள்ள காலம்கள் (Numeric Columns) எதுவும் இல்லை!")
+        else:
+            # 'close' காலம் இருந்தால் அதை தானாகவே முதலில் தேர்ந்தெடுத்துக் கொள்ளும்
+            default_idx = numeric_cols.index('close') if 'close' in numeric_cols else 0
+            column_to_forecast = st.selectbox("எந்த காலத்தை கணிப்பீட்டிற்கு பயன்படுத்த வேண்டும்?", numeric_cols, index=default_idx)
+            
+            forecast_length = st.slider("எத்தனை கேண்டில்களை கணிக்க வேண்டும்? (Horizon):", min_value=10, max_value=100, value=20, step=10)
 
-        if st.button("கணிப்பை தொடங்குக (Run Forecast)"):
-            with st.spinner('TimesFM மாடல் தரவை பகுப்பாய்வு செய்கிறது... தயவுசெய்து காத்திருக்கவும்...'):
-                try:
-                    predicted_time_str = datetime.now(IST).strftime("%d-%b %I:%M %p")
-                    data = raw_data.dropna(subset=[column_to_forecast]).copy()
-                    
-                    time_col = None
-                    for col in data.columns:
-                        if col.lower() in ['time', 'date', 'datetime']:
-                            time_col = col
-                            break
+            if st.button("கணிப்பை தொடங்குக (Run Forecast)"):
+                with st.spinner('TimesFM மாடல் தரவை பகுப்பாய்வு செய்கிறது... தயவுசெய்து காத்திருக்கவும்...'):
+                    try:
+                        predicted_time_str = datetime.now(IST).strftime("%d-%b %I:%M %p")
+                        data = raw_data.dropna(subset=[column_to_forecast]).copy()
+                        
+                        time_col = None
+                        for col in data.columns:
+                            if col.lower() in ['time', 'date', 'datetime']:
+                                time_col = col
+                                break
 
-                    full_prices = data[column_to_forecast].values
-                    
-                    # 🌟 FIX: புதிய மாடலை உருவாக்காமல் கேச்சில் உள்ள மாடலை அழைத்தல்
-                    tfm = load_timesfm_model(forecast_length)
-                    
-                    # கணிப்பு உருவாக்குதல்
-                    point_forecast, _ = tfm.forecast([full_prices], freq=[0]) 
-                    forecast_values = point_forecast[0]
-                    
-                    st.success('கணிப்பு வெற்றிகரமாக முடிந்தது! 🎉')
-                    
-                    # --- தானியங்கி கணிப்பு விளக்கம் (Interpretation Logic) ---
-                    last_historical_price = full_prices[-1]
-                    final_forecast_price = forecast_values[-1]
-                    pct_change = ((final_forecast_price - last_historical_price) / last_historical_price) * 100
-                    
-                    if pct_change > 0.5:
-                        interpretation = "BULLISH (Upward Trend)"
-                        box_color = "#d4edda"
-                    elif pct_change < -0.5:
-                        interpretation = "BEARISH (Downward Trend)"
-                        box_color = "#f8d7da"
-                    else:
-                        interpretation = "SIDEWAYS (Consolidation)"
-                        box_color = "#fff3cd"
-                    
-                    # --- டைம்লাইন உருவாக்கம் ---
-                    target_time_str = f"T+{forecast_length}" 
-                    
-                    if time_col:
-                        data[time_col] = pd.to_datetime(data[time_col], errors='coerce')
-                        data = data.dropna(subset=[time_col]) 
-                        last_50_data = data.tail(50)
-                        plot_historical_prices = last_50_data[column_to_forecast].values
-                        historical_times = last_50_data[time_col].dt.strftime("%d-%b %H:%M").tolist()
+                        full_prices = data[column_to_forecast].values
                         
-                        if len(data) >= 2: time_interval = data[time_col].iloc[-1] - data[time_col].iloc[-2]
-                        else: time_interval = pd.Timedelta(minutes=5) 
+                        # கேச்சில் உள்ள மாடலை அழைத்தல்
+                        tfm = load_timesfm_model(forecast_length)
                         
-                        last_known_time = data[time_col].iloc[-1]
-                        future_times = []
-                        for i in range(1, forecast_length + 1):
-                            next_time = last_known_time + (time_interval * i)
-                            future_times.append(next_time.strftime("%d-%b %I:%M %p"))
+                        # கணிப்பு உருவாக்குதல்
+                        point_forecast, _ = tfm.forecast([full_prices], freq=[0]) 
+                        forecast_values = point_forecast[0]
+                        
+                        st.success('கணிப்பு வெற்றிகரமாக முடிந்தது! 🎉')
+                        
+                        # --- தானியங்கி கணிப்பு விளக்கம் (Interpretation Logic) ---
+                        last_historical_price = full_prices[-1]
+                        final_forecast_price = forecast_values[-1]
+                        pct_change = ((final_forecast_price - last_historical_price) / last_historical_price) * 100
+                        
+                        if pct_change > 0.5:
+                            interpretation = "BULLISH (Upward Trend)"
+                            box_color = "#d4edda"
+                        elif pct_change < -0.5:
+                            interpretation = "BEARISH (Downward Trend)"
+                            box_color = "#f8d7da"
+                        else:
+                            interpretation = "SIDEWAYS (Consolidation)"
+                            box_color = "#fff3cd"
+                        
+                        # --- டைம்লাইন உருவாக்கம் ---
+                        target_time_str = f"T+{forecast_length}" 
+                        
+                        if time_col:
+                            data[time_col] = pd.to_datetime(data[time_col], errors='coerce')
+                            data = data.dropna(subset=[time_col]) 
+                            last_50_data = data.tail(50)
+                            plot_historical_prices = last_50_data[column_to_forecast].values
+                            historical_times = last_50_data[time_col].dt.strftime("%d-%b %H:%M").tolist()
                             
-                        all_times_labels = [pd.to_datetime(t).strftime("%d-%b %H:%M") for t in last_50_data[time_col]] + [pd.to_datetime(t).strftime("%d-%b %H:%M") for t in future_times]
-                        target_time_str = future_times[-1] 
-                    else:
-                        last_50_data = data.tail(50)
-                        plot_historical_prices = last_50_data[column_to_forecast].values
-                        all_times_labels = [str(i) for i in range(50 + forecast_length)]
-                    
-                    # முக்கிய சிக்னல்
-                    st.markdown(f"### **AI Interpretation View:**")
-                    st.info(f"🔮 **Stock:** {stock_name.upper()} | **Predicted At (IST):** {predicted_time_str} | **Target Time:** {target_time_str}")
-                    
-                    # --- சார்ட் வரைதல் ---
-                    fig, ax = plt.subplots(figsize=(12, 6))
-                    ax.plot(range(50), plot_historical_prices, label="Historical Data (Last 50)", color="blue", linewidth=2)
-                    
-                    connected_x_values = list(range(49, 50 + forecast_length))
-                    connected_y_values = [plot_historical_prices[-1]] + list(forecast_values)
-                    ax.plot(connected_x_values, connected_y_values, label=f"TimesFM Forecast (Next {forecast_length})", color='red', linestyle='dashed', marker='o', markersize=4)
-                    
-                    # சார்ட்டின் உள்ளே இருக்கும் பாக்ஸ்
-                    info_text = (
-                        f"Stock: {stock_name.upper()}\n"
-                        f"Predicted (IST): {predicted_time_str}\n"
-                        f"AI View: {interpretation}\n"
-                        f"Last Close: {last_historical_price:.2f}\n"
-                        f"Proj. Target: {final_forecast_price:.2f}\n"
-                        f"Target Time: {target_time_str}\n"
-                        f"Est. Change: {pct_change:.2f}%"
-                    )
-                    ax.text(0.02, 0.95, info_text, transform=ax.transAxes, verticalalignment='top', fontsize=10, fontweight='bold',
-                            bbox=dict(boxstyle='round,pad=0.5', facecolor=box_color, alpha=0.9, edgecolor='gray'))
-                    
-                    tick_spacing = max(1, len(all_times_labels) // 10)
-                    tick_positions = range(0, len(all_times_labels), tick_spacing)
-                    tick_labels = [all_times_labels[i] for i in tick_positions]
-                    ax.set_xticks(tick_positions)
-                    ax.set_xticklabels(tick_labels, rotation=45, ha='right', fontsize=9)
-                    
-                    ax.set_title(f"{stock_name.upper()} ({column_to_forecast}) - AI Future Forecast", fontsize=14, fontweight='bold')
-                    ax.set_xlabel("Timeline (Date & Time)")
-                    ax.set_ylabel("Price")
-                    ax.legend(loc="lower left")
-                    ax.grid(True, linestyle='--', alpha=0.6)
-                    fig.tight_layout()
-                    
-                    st.pyplot(fig)
-                    
-                    # ஹிஸ்டரி லாக் சேமித்தல்
-                    history_entry = pd.DataFrame([{
-                        "Run_Timestamp": datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S"),
-                        "Stock_Name": stock_name.upper(),
-                        "Predicted_At_IST": predicted_time_str,
-                        "Asset_Column": column_to_forecast,
-                        "Last_Close": round(last_historical_price, 2),
-                        "AI_Target_Price": round(final_forecast_price, 2),
-                        "Target_Timeline": target_time_str,
-                        "Expected_Change_Pct": round(pct_change, 2),
-                        "AI_Signal": interpretation,
-                        "Horizon_Candles": forecast_length
-                    }])
-                    
-                    if not os.path.isfile(HISTORY_FILE):
-                        history_entry.to_csv(HISTORY_FILE, index=False)
-                    else:
-                        history_entry.to_csv(HISTORY_FILE, mode='a', header=False, index=False)
+                            if len(data) >= 2: time_interval = data[time_col].iloc[-1] - data[time_col].iloc[-2]
+                            else: time_interval = pd.Timedelta(minutes=5) 
+                            
+                            last_known_time = data[time_col].iloc[-1]
+                            future_times = []
+                            for i in range(1, forecast_length + 1):
+                                next_time = last_known_time + (time_interval * i)
+                                future_times.append(next_time.strftime("%d-%b %I:%M %p"))
+                                
+                            all_times_labels = [pd.to_datetime(t).strftime("%d-%b %H:%M") for t in last_50_data[time_col]] + [pd.to_datetime(t).strftime("%d-%b %H:%M") for t in future_times]
+                            target_time_str = future_times[-1] 
+                        else:
+                            last_50_data = data.tail(50)
+                            plot_historical_prices = last_50_data[column_to_forecast].values
+                            all_times_labels = [str(i) for i in range(50 + forecast_length)]
                         
-                except Exception as e:
-                    st.error(f"ஒரு பிழை ஏற்பட்டுள்ளது: {e}")
+                        # முக்கிய சிக்னல்
+                        st.markdown(f"### **AI Interpretation View:**")
+                        st.info(f"🔮 **Stock:** {stock_name.upper()} | **Predicted At (IST):** {predicted_time_str} | **Target Time:** {target_time_str}")
+                        
+                        # --- சார்ட் வரைதல் ---
+                        fig, ax = plt.subplots(figsize=(12, 6))
+                        ax.plot(range(50), plot_historical_prices, label="Historical Data (Last 50)", color="blue", linewidth=2)
+                        
+                        connected_x_values = list(range(49, 50 + forecast_length))
+                        connected_y_values = [plot_historical_prices[-1]] + list(forecast_values)
+                        ax.plot(connected_x_values, connected_y_values, label=f"TimesFM Forecast (Next {forecast_length})", color='red', linestyle='dashed', marker='o', markersize=4)
+                        
+                        # சார்ட்டின் உள்ளே இருக்கும் பாக்ஸ்
+                        info_text = (
+                            f"Stock: {stock_name.upper()}\n"
+                            f"Predicted (IST): {predicted_time_str}\n"
+                            f"AI View: {interpretation}\n"
+                            f"Last Close: {last_historical_price:.2f}\n"
+                            f"Proj. Target: {final_forecast_price:.2f}\n"
+                            f"Target Time: {target_time_str}\n"
+                            f"Est. Change: {pct_change:.2f}%"
+                        )
+                        ax.text(0.02, 0.95, info_text, transform=ax.transAxes, verticalalignment='top', fontsize=10, fontweight='bold',
+                                bbox=dict(boxstyle='round,pad=0.5', facecolor=box_color, alpha=0.9, edgecolor='gray'))
+                        
+                        tick_spacing = max(1, len(all_times_labels) // 10)
+                        tick_positions = range(0, len(all_times_labels), tick_spacing)
+                        tick_labels = [all_times_labels[i] for i in tick_positions]
+                        ax.set_xticks(tick_positions)
+                        ax.set_xticklabels(tick_labels, rotation=45, ha='right', fontsize=9)
+                        
+                        ax.set_title(f"{stock_name.upper()} ({column_to_forecast}) - AI Future Forecast", fontsize=14, fontweight='bold')
+                        ax.set_xlabel("Timeline (Date & Time)")
+                        ax.set_ylabel("Price")
+                        ax.legend(loc="lower left")
+                        ax.grid(True, linestyle='--', alpha=0.6)
+                        fig.tight_layout()
+                        
+                        st.pyplot(fig)
+                        
+                        # ஹிஸ்டரி லாக் சேமித்தல்
+                        history_entry = pd.DataFrame([{
+                            "Run_Timestamp": datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S"),
+                            "Stock_Name": stock_name.upper(),
+                            "Predicted_At_IST": predicted_time_str,
+                            "Asset_Column": column_to_forecast,
+                            "Last_Close": round(last_historical_price, 2),
+                            "AI_Target_Price": round(final_forecast_price, 2),
+                            "Target_Timeline": target_time_str,
+                            "Expected_Change_Pct": round(pct_change, 2),
+                            "AI_Signal": interpretation,
+                            "Horizon_Candles": forecast_length
+                        }])
+                        
+                        if not os.path.isfile(HISTORY_FILE):
+                            history_entry.to_csv(HISTORY_FILE, index=False)
+                        else:
+                            history_entry.to_csv(HISTORY_FILE, mode='a', header=False, index=False)
+                            
+                    except Exception as e:
+                        st.error(f"ஒரு பிழை ஏற்பட்டுள்ளது: {e}")
 
 # ----------------- TAB 2: HISTORY LOG VIEW -----------------
 with tab2:
