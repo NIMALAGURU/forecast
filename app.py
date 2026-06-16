@@ -8,8 +8,17 @@ from datetime import datetime, timedelta, timezone
 # ஹிஸ்டரியைச் சேமிப்பதற்கான ஃபைல் பெயர்
 HISTORY_FILE = "trading_forecast_history.csv"
 
-# 🌟 இந்திய நேரத்தை (IST) கட்டாயமாக செட் செய்யும் பகுதி
+# இந்திய நேரத்தை (IST) செட் செய்தல்
 IST = timezone(timedelta(hours=5, minutes=30))
+
+# 🌟 🌟 🌟 SMART CACHE ENGINE 🌟 🌟 🌟
+# இந்த பங்க்ஷன் மாடலை ஒரே ஒரு முறை மட்டும் மெமரியில் ஏற்றி பாதுகாக்கும்.
+@st.cache_resource
+def load_timesfm_model(horizon_len):
+    hparams = timesfm.TimesFmHparams(context_len=512, horizon_len=horizon_len, backend="cpu")
+    checkpoint = timesfm.TimesFmCheckpoint(huggingface_repo_id="google/timesfm-1.0-200m-pytorch")
+    tfm = timesfm.TimesFm(hparams=hparams, checkpoint=checkpoint)
+    return tfm
 
 # 1. பக்க வடிவமைப்பு மற்றும் டேப்கள் (Tabs Setup)
 st.set_page_config(page_title="TimesFM Trading Forecaster", layout="wide")
@@ -33,14 +42,14 @@ with tab1:
         stock_name = st.text_input("ஸ்டாக்கின் பெயர் (Stock Name):", value=default_stock_name)
 
         column_to_forecast = st.selectbox("எந்த காலத்தை கணிப்பீட்டிற்கு பயன்படுத்த வேண்டும்?", raw_data.columns)
+        
+        # ⚠️ ரேம் பாதுகாப்பிற்காக ஸ்லைடர் மதிப்பை நிலையானதாக மாற்றுவது சிறந்தது (உ-ம்: 20 அல்லது 50)
         forecast_length = st.slider("எத்தனை கேண்டில்களை கணிக்க வேண்டும்? (Horizon):", min_value=10, max_value=100, value=20, step=10)
 
         if st.button("கணிப்பை தொடங்குக (Run Forecast)"):
-            with st.spinner('TimesFM மாடல் தரவை பகுப்பாய்வு செய்கிறது...'):
+            with st.spinner('TimesFM மாடல் தரவை பகுப்பாய்வு செய்கிறது... தயவுசெய்து காத்திருக்கவும்...'):
                 try:
-                    # 🌟 FIX: சர்வர் எங்கு இருந்தாலும் இந்திய நேரத்தை (IST) துல்லியமாக எடுத்தல்
                     predicted_time_str = datetime.now(IST).strftime("%d-%b %I:%M %p")
-                    
                     data = raw_data.dropna(subset=[column_to_forecast]).copy()
                     
                     time_col = None
@@ -51,12 +60,10 @@ with tab1:
 
                     full_prices = data[column_to_forecast].values
                     
-                    # TimesFM செட்டப்
-                    hparams = timesfm.TimesFmHparams(context_len=512, horizon_len=forecast_length, backend="cpu")
-                    checkpoint = timesfm.TimesFmCheckpoint(huggingface_repo_id="google/timesfm-1.0-200m-pytorch")
-                    tfm = timesfm.TimesFm(hparams=hparams, checkpoint=checkpoint)
+                    # 🌟 FIX: புதிய மாடலை உருவாக்காமல் கேச்சில் உள்ள மாடலை அழைத்தல்
+                    tfm = load_timesfm_model(forecast_length)
                     
-                    # கணிப்பு
+                    # கணிப்பு உருவாக்குதல்
                     point_forecast, _ = tfm.forecast([full_prices], freq=[0]) 
                     forecast_values = point_forecast[0]
                     
@@ -103,7 +110,7 @@ with tab1:
                         plot_historical_prices = last_50_data[column_to_forecast].values
                         all_times_labels = [str(i) for i in range(50 + forecast_length)]
                     
-                    # ஸ்கிரீனில் முக்கிய சிக்னலைக் காட்டுதல்
+                    # முக்கிய சிக்னல்
                     st.markdown(f"### **AI Interpretation View:**")
                     st.info(f"🔮 **Stock:** {stock_name.upper()} | **Predicted At (IST):** {predicted_time_str} | **Target Time:** {target_time_str}")
                     
@@ -143,7 +150,7 @@ with tab1:
                     
                     st.pyplot(fig)
                     
-                    # 🌟 FIX: ஹிஸ்டரி லாக் ஃபைலிலும் இந்திய நேரப்படியே (IST) சேமித்தல்
+                    # ஹிஸ்டரி லாக் சேமித்தல்
                     history_entry = pd.DataFrame([{
                         "Run_Timestamp": datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S"),
                         "Stock_Name": stock_name.upper(),
