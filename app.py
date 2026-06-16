@@ -3,10 +3,13 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import timesfm
 import os
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 # ஹிஸ்டரியைச் சேமிப்பதற்கான ஃபைல் பெயர்
 HISTORY_FILE = "trading_forecast_history.csv"
+
+# 🌟 இந்திய நேரத்தை (IST) கட்டாயமாக செட் செய்யும் பகுதி
+IST = timezone(timedelta(hours=5, minutes=30))
 
 # 1. பக்க வடிவமைப்பு மற்றும் டேப்கள் (Tabs Setup)
 st.set_page_config(page_title="TimesFM Trading Forecaster", layout="wide")
@@ -25,7 +28,7 @@ with tab1:
         st.subheader("டேட்டா பிரிவியூ (Data Preview)")
         st.dataframe(raw_data.tail()) 
 
-        # 🌟 NEW: Auto-detect stock name from file name
+        # Auto-detect stock name from file name
         default_stock_name = uploaded_file.name.replace('.csv', '').replace('.CSV', '')
         stock_name = st.text_input("ஸ்டாக்கின் பெயர் (Stock Name):", value=default_stock_name)
 
@@ -35,8 +38,8 @@ with tab1:
         if st.button("கணிப்பை தொடங்குக (Run Forecast)"):
             with st.spinner('TimesFM மாடல் தரவை பகுப்பாய்வு செய்கிறது...'):
                 try:
-                    # கணிப்பு செய்த நேரத்தை துல்லியமாக எடுத்தல் (Predicted Time)
-                    predicted_time_str = datetime.now().strftime("%d-%b %I:%M %p")
+                    # 🌟 FIX: சர்வர் எங்கு இருந்தாலும் இந்திய நேரத்தை (IST) துல்லியமாக எடுத்தல்
+                    predicted_time_str = datetime.now(IST).strftime("%d-%b %I:%M %p")
                     
                     data = raw_data.dropna(subset=[column_to_forecast]).copy()
                     
@@ -74,7 +77,7 @@ with tab1:
                         interpretation = "SIDEWAYS (Consolidation)"
                         box_color = "#fff3cd"
                     
-                    # --- டைம்லைன் உருவாக்கம் ---
+                    # --- டைம்লাইন உருவாக்கம் ---
                     target_time_str = f"T+{forecast_length}" 
                     
                     if time_col:
@@ -91,7 +94,6 @@ with tab1:
                         future_times = []
                         for i in range(1, forecast_length + 1):
                             next_time = last_known_time + (time_interval * i)
-                            # 12-Hour பார்மேட்டில் AM/PM உடன் மாற்றுதல்
                             future_times.append(next_time.strftime("%d-%b %I:%M %p"))
                             
                         all_times_labels = [pd.to_datetime(t).strftime("%d-%b %H:%M") for t in last_50_data[time_col]] + [pd.to_datetime(t).strftime("%d-%b %H:%M") for t in future_times]
@@ -103,7 +105,7 @@ with tab1:
                     
                     # ஸ்கிரீனில் முக்கிய சிக்னலைக் காட்டுதல்
                     st.markdown(f"### **AI Interpretation View:**")
-                    st.info(f"🔮 **Stock:** {stock_name.upper()} | **Predicted At:** {predicted_time_str} | **Target Time:** {target_time_str}")
+                    st.info(f"🔮 **Stock:** {stock_name.upper()} | **Predicted At (IST):** {predicted_time_str} | **Target Time:** {target_time_str}")
                     
                     # --- சார்ட் வரைதல் ---
                     fig, ax = plt.subplots(figsize=(12, 6))
@@ -113,10 +115,10 @@ with tab1:
                     connected_y_values = [plot_historical_prices[-1]] + list(forecast_values)
                     ax.plot(connected_x_values, connected_y_values, label=f"TimesFM Forecast (Next {forecast_length})", color='red', linestyle='dashed', marker='o', markersize=4)
                     
-                    # 🌟 சார்ட்டின் உள்ளே இருக்கும் பாக்ஸில் நீங்கள் கேட்ட அனைத்து விபரங்களும் 🌟
+                    # சார்ட்டின் உள்ளே இருக்கும் பாக்ஸ்
                     info_text = (
                         f"Stock: {stock_name.upper()}\n"
-                        f"Predicted: {predicted_time_str}\n"
+                        f"Predicted (IST): {predicted_time_str}\n"
                         f"AI View: {interpretation}\n"
                         f"Last Close: {last_historical_price:.2f}\n"
                         f"Proj. Target: {final_forecast_price:.2f}\n"
@@ -141,11 +143,11 @@ with tab1:
                     
                     st.pyplot(fig)
                     
-                    # 🌟 ஹிஸ்டரியிலும் ஸ்டாக் பெயர் மற்றும் கணித்த நேரத்தைச் சேமித்தல்
+                    # 🌟 FIX: ஹிஸ்டரி லாக் ஃபைலிலும் இந்திய நேரப்படியே (IST) சேமித்தல்
                     history_entry = pd.DataFrame([{
-                        "Run_Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "Run_Timestamp": datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S"),
                         "Stock_Name": stock_name.upper(),
-                        "Predicted_At": predicted_time_str,
+                        "Predicted_At_IST": predicted_time_str,
                         "Asset_Column": column_to_forecast,
                         "Last_Close": round(last_historical_price, 2),
                         "AI_Target_Price": round(final_forecast_price, 2),
