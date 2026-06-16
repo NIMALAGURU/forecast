@@ -11,10 +11,9 @@ HISTORY_FILE = "trading_forecast_history.csv"
 # இந்திய நேரத்தை (IST) செட் செய்தல்
 IST = timezone(timedelta(hours=5, minutes=30))
 
-# 🌟 CRASH-PROOF CACHE ENGINE: Removed argument to freeze memory usage at exactly 1 instance
+# CRASH-PROOF CACHE ENGINE
 @st.cache_resource
 def load_timesfm_model():
-    # Hardcoding max horizon to 100 so it handles any slider value up to 100 safely without reloading
     hparams = timesfm.TimesFmHparams(context_len=512, horizon_len=100, backend="cpu")
     checkpoint = timesfm.TimesFmCheckpoint(huggingface_repo_id="google/timesfm-1.0-200m-pytorch")
     tfm = timesfm.TimesFm(hparams=hparams, checkpoint=checkpoint)
@@ -66,16 +65,24 @@ with tab1:
 
                         full_prices = data[column_to_forecast].values
                         
-                        # Crash-proof மாடலை அழைத்தல்
+                        # கேச்சில் உள்ள மாடலை அழைத்தல்
                         tfm = load_timesfm_model()
                         
-                        # கணிப்பு உருவாக்குதல்
-                        point_forecast, _ = tfm.forecast([full_prices], freq=[0]) 
-                        forecast_values = point_forecast[0][:forecast_length] # Slice exactly to the slider length
+                        # 🌟 🌟 🌟 FIX: பாயிண்ட் மற்றும் குவாண்ட்டைல் (Ranges) இரண்டையும் எடுத்தல் 🌟 🌟 🌟
+                        point_forecast, quantile_forecast = tfm.forecast([full_prices], freq=[0]) 
+                        
+                        # ஸ்லைடர் அளவுக்கு ஏற்ப டேட்டாவை துல்லியமாக வெட்டுதல் (Slicing)
+                        forecast_values = point_forecast[0][:forecast_length]
+                        q_forecast = quantile_forecast[0][:forecast_length]
+                        
+                        # முதல் குவாண்ட்டைல் (10th percentile - Lower Boundary)
+                        lower_bound = q_forecast[:, 0]
+                        # இறுதி குவாண்ட்டைல் (90th percentile - Upper Boundary)
+                        upper_bound = q_forecast[:, -1]
                         
                         st.success('கணிப்பு வெற்றிகரமாக முடிந்தது! 🎉')
                         
-                        # --- தானியங்கி கணிப்பு விளக்கம் (Interpretation Logic) ---
+                        # --- தானியங்கி கணிப்பு விளக்கம் ---
                         last_historical_price = full_prices[-1]
                         final_forecast_price = forecast_values[-1]
                         pct_change = ((final_forecast_price - last_historical_price) / last_historical_price) * 100
@@ -90,7 +97,7 @@ with tab1:
                             interpretation = "SIDEWAYS (Consolidation)"
                             box_color = "#fff3cd"
                         
-                        # --- 🌟 NSE MARKET HOURS FILTER TIMELINE LOGIC 🌟 ---
+                        # --- NSE MARKET HOURS FILTER TIMELINE LOGIC ---
                         target_time_str = f"T+{forecast_length}" 
                         
                         if time_col:
@@ -100,10 +107,8 @@ with tab1:
                             plot_historical_prices = last_50_data[column_to_forecast].values
                             historical_times = last_50_data[time_col].dt.strftime("%d-%b %H:%M").tolist()
                             
-                            if len(data) >= 2: 
-                                time_interval = data[time_col].iloc[-1] - data[time_col].iloc[-2]
-                            else: 
-                                time_interval = pd.Timedelta(minutes=5) 
+                            if len(data) >= 2: time_interval = data[time_col].iloc[-1] - data[time_col].iloc[-2]
+                            else: time_interval = pd.Timedelta(minutes=5) 
                             
                             last_known_time = data[time_col].iloc[-1]
                             future_times = []
@@ -111,17 +116,11 @@ with tab1:
                             
                             for _ in range(forecast_length):
                                 current_time += time_interval
-                                
-                                # 1. மாலை 3:30 (15:30) தாண்டினால் அடுத்த நாள் காலை 9:15-க்கு மாற்றுதல்
                                 if current_time.hour > 15 or (current_time.hour == 15 and current_time.minute > 30):
                                     current_time += timedelta(days=1)
                                     current_time = current_time.replace(hour=9, minute=15)
-                                    
-                                # 2. ஒருவேளை காலை 9:15-க்கு முன் இருந்தால் 9:15 ஆக மாற்றுதல்
                                 if current_time.hour < 9 or (current_time.hour == 9 and current_time.minute < 15):
                                     current_time = current_time.replace(hour=9, minute=15)
-                                    
-                                # 3. சனிக்கிழமை (5) அல்லது ஞாயிற்றுக்கிழமை (6) வந்தால் திங்கட்கிழமைக்கு மாற்றுதல்
                                 while current_time.weekday() >= 5:
                                     current_time += timedelta(days=1)
                                     current_time = current_time.replace(hour=9, minute=15)
@@ -143,9 +142,19 @@ with tab1:
                         fig, ax = plt.subplots(figsize=(12, 6))
                         ax.plot(range(50), plot_historical_prices, label="Historical Data (Last 50)", color="blue", linewidth=2)
                         
+                        # எக்ஸ் மற்றும் ஒய் அச்சுகளை இணைத்தல்
                         connected_x_values = list(range(49, 50 + forecast_length))
                         connected_y_values = [plot_historical_prices[-1]] + list(forecast_values)
+                        
+                        # 🌟 🌟 🌟 FIX: எல்லைக் கோடுகளை இணைத்து நிழலிடுதல் (Fill Between Logic) 🌟 🌟 🌟
+                        connected_lower = [plot_historical_prices[-1]] + list(lower_bound)
+                        connected_upper = [plot_historical_prices[-1]] + list(upper_bound)
+                        
+                        # 1. மையப்புள்ளி கோடு (Forecast Line)
                         ax.plot(connected_x_values, connected_y_values, label=f"TimesFM Forecast (Next {forecast_length})", color='red', linestyle='dashed', marker='o', markersize=4)
+                        
+                        # 2. ரேஞ்ச் ஃபனல் நிழல் (Shaded Uncertainty Band)
+                        ax.fill_between(connected_x_values, connected_lower, connected_upper, color='red', alpha=0.12, label="AI Target Range (Confidence Interval)")
                         
                         # சார்ட்டின் உள்ளே இருக்கும் பாக்ஸ்
                         info_text = (
@@ -154,6 +163,7 @@ with tab1:
                             f"AI View: {interpretation}\n"
                             f"Last Close: {last_historical_price:.2f}\n"
                             f"Proj. Target: {final_forecast_price:.2f}\n"
+                            f"Target Range: {lower_bound[-1]:.1f} - {upper_bound[-1]:.1f}\n"
                             f"Target Time: {target_time_str}\n"
                             f"Est. Change: {pct_change:.2f}%"
                         )
@@ -166,7 +176,7 @@ with tab1:
                         ax.set_xticks(tick_positions)
                         ax.set_xticklabels(tick_labels, rotation=45, ha='right', fontsize=9)
                         
-                        ax.set_title(f"{stock_name.upper()} ({column_to_forecast}) - AI Future Forecast (NSE Market Hours Enabled)", fontsize=14, fontweight='bold')
+                        ax.set_title(f"{stock_name.upper()} ({column_to_forecast}) - AI Expected Range Forecast", fontsize=14, fontweight='bold')
                         ax.set_xlabel("Timeline (Date & Time)")
                         ax.set_ylabel("Price")
                         ax.legend(loc="lower left")
@@ -183,6 +193,8 @@ with tab1:
                             "Asset_Column": column_to_forecast,
                             "Last_Close": round(last_historical_price, 2),
                             "AI_Target_Price": round(final_forecast_price, 2),
+                            "Lower_Limit": round(lower_bound[-1], 2),
+                            "Upper_Limit": round(upper_bound[-1], 2),
                             "Target_Timeline": target_time_str,
                             "Expected_Change_Pct": round(pct_change, 2),
                             "AI_Signal": interpretation,
