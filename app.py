@@ -11,10 +11,11 @@ HISTORY_FILE = "trading_forecast_history.csv"
 # இந்திய நேரத்தை (IST) செட் செய்தல்
 IST = timezone(timedelta(hours=5, minutes=30))
 
-# SMART CACHE ENGINE
+# 🌟 CRASH-PROOF CACHE ENGINE: Removed argument to freeze memory usage at exactly 1 instance
 @st.cache_resource
-def load_timesfm_model(horizon_len):
-    hparams = timesfm.TimesFmHparams(context_len=512, horizon_len=horizon_len, backend="cpu")
+def load_timesfm_model():
+    # Hardcoding max horizon to 100 so it handles any slider value up to 100 safely without reloading
+    hparams = timesfm.TimesFmHparams(context_len=512, horizon_len=100, backend="cpu")
     checkpoint = timesfm.TimesFmCheckpoint(huggingface_repo_id="google/timesfm-1.0-200m-pytorch")
     tfm = timesfm.TimesFm(hparams=hparams, checkpoint=checkpoint)
     return tfm
@@ -40,13 +41,12 @@ with tab1:
         default_stock_name = uploaded_file.name.replace('.csv', '').replace('.CSV', '')
         stock_name = st.text_input("ஸ்டாக்கின் பெயர் (Stock Name):", value=default_stock_name)
 
-        # 🌟 🌟 🌟 FIX: வெறும் எண்கள் உள்ள காலம்களை (Numeric Columns) மட்டுமே வடிகட்டி எடுத்தல் 🌟 🌟 🌟
+        # வெறும் எண்கள் உள்ள காலம்களை மட்டுமே வடிகட்டி எடுத்தல்
         numeric_cols = raw_data.select_dtypes(include=['number']).columns.tolist()
         
         if not numeric_cols:
-            st.error("உங்கள் CSV ஃபைலில் எண்கள் உள்ள காலம்கள் (Numeric Columns) எதுவும் இல்லை!")
+            st.error("உங்கள் CSV ஃபைலில் எண்கள் உள்ள காலம்கள் எதுவும் இல்லை!")
         else:
-            # 'close' காலம் இருந்தால் அதை தானாகவே முதலில் தேர்ந்தெடுத்துக் கொள்ளும்
             default_idx = numeric_cols.index('close') if 'close' in numeric_cols else 0
             column_to_forecast = st.selectbox("எந்த காலத்தை கணிப்பீட்டிற்கு பயன்படுத்த வேண்டும்?", numeric_cols, index=default_idx)
             
@@ -66,12 +66,12 @@ with tab1:
 
                         full_prices = data[column_to_forecast].values
                         
-                        # கேச்சில் உள்ள மாடலை அழைத்தல்
-                        tfm = load_timesfm_model(forecast_length)
+                        # Crash-proof மாடலை அழைத்தல்
+                        tfm = load_timesfm_model()
                         
                         # கணிப்பு உருவாக்குதல்
                         point_forecast, _ = tfm.forecast([full_prices], freq=[0]) 
-                        forecast_values = point_forecast[0]
+                        forecast_values = point_forecast[0][:forecast_length] # Slice exactly to the slider length
                         
                         st.success('கணிப்பு வெற்றிகரமாக முடிந்தது! 🎉')
                         
@@ -90,7 +90,7 @@ with tab1:
                             interpretation = "SIDEWAYS (Consolidation)"
                             box_color = "#fff3cd"
                         
-                        # --- டைம்লাইন உருவாக்கம் ---
+                        # --- 🌟 NSE MARKET HOURS FILTER TIMELINE LOGIC 🌟 ---
                         target_time_str = f"T+{forecast_length}" 
                         
                         if time_col:
@@ -100,14 +100,33 @@ with tab1:
                             plot_historical_prices = last_50_data[column_to_forecast].values
                             historical_times = last_50_data[time_col].dt.strftime("%d-%b %H:%M").tolist()
                             
-                            if len(data) >= 2: time_interval = data[time_col].iloc[-1] - data[time_col].iloc[-2]
-                            else: time_interval = pd.Timedelta(minutes=5) 
+                            if len(data) >= 2: 
+                                time_interval = data[time_col].iloc[-1] - data[time_col].iloc[-2]
+                            else: 
+                                time_interval = pd.Timedelta(minutes=5) 
                             
                             last_known_time = data[time_col].iloc[-1]
                             future_times = []
-                            for i in range(1, forecast_length + 1):
-                                next_time = last_known_time + (time_interval * i)
-                                future_times.append(next_time.strftime("%d-%b %I:%M %p"))
+                            current_time = last_known_time
+                            
+                            for _ in range(forecast_length):
+                                current_time += time_interval
+                                
+                                # 1. மாலை 3:30 (15:30) தாண்டினால் அடுத்த நாள் காலை 9:15-க்கு மாற்றுதல்
+                                if current_time.hour > 15 or (current_time.hour == 15 and current_time.minute > 30):
+                                    current_time += timedelta(days=1)
+                                    current_time = current_time.replace(hour=9, minute=15)
+                                    
+                                # 2. ஒருவேளை காலை 9:15-க்கு முன் இருந்தால் 9:15 ஆக மாற்றுதல்
+                                if current_time.hour < 9 or (current_time.hour == 9 and current_time.minute < 15):
+                                    current_time = current_time.replace(hour=9, minute=15)
+                                    
+                                # 3. சனிக்கிழமை (5) அல்லது ஞாயிற்றுக்கிழமை (6) வந்தால் திங்கட்கிழமைக்கு மாற்றுதல்
+                                while current_time.weekday() >= 5:
+                                    current_time += timedelta(days=1)
+                                    current_time = current_time.replace(hour=9, minute=15)
+                                    
+                                future_times.append(current_time.strftime("%d-%b %I:%M %p"))
                                 
                             all_times_labels = [pd.to_datetime(t).strftime("%d-%b %H:%M") for t in last_50_data[time_col]] + [pd.to_datetime(t).strftime("%d-%b %H:%M") for t in future_times]
                             target_time_str = future_times[-1] 
@@ -147,7 +166,7 @@ with tab1:
                         ax.set_xticks(tick_positions)
                         ax.set_xticklabels(tick_labels, rotation=45, ha='right', fontsize=9)
                         
-                        ax.set_title(f"{stock_name.upper()} ({column_to_forecast}) - AI Future Forecast", fontsize=14, fontweight='bold')
+                        ax.set_title(f"{stock_name.upper()} ({column_to_forecast}) - AI Future Forecast (NSE Market Hours Enabled)", fontsize=14, fontweight='bold')
                         ax.set_xlabel("Timeline (Date & Time)")
                         ax.set_ylabel("Price")
                         ax.legend(loc="lower left")
