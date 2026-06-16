@@ -68,17 +68,14 @@ with tab1:
                         # கேச்சில் உள்ள மாடலை அழைத்தல்
                         tfm = load_timesfm_model()
                         
-                        # 🌟 🌟 🌟 FIX: பாயிண்ட் மற்றும் குவாண்ட்டைல் (Ranges) இரண்டையும் எடுத்தல் 🌟 🌟 🌟
+                        # பாயிண்ட் மற்றும் குவாண்ட்டைல் இரண்டையும் எடுத்தல்
                         point_forecast, quantile_forecast = tfm.forecast([full_prices], freq=[0]) 
                         
-                        # ஸ்லைடர் அளவுக்கு ஏற்ப டேட்டாவை துல்லியமாக வெட்டுதல் (Slicing)
                         forecast_values = point_forecast[0][:forecast_length]
-                        q_forecast = quantile_forecast[0][:forecast_length]
+                        st.session_state['q_forecast'] = quantile_forecast[0][:forecast_length]
                         
-                        # முதல் குவாண்ட்டைல் (10th percentile - Lower Boundary)
-                        lower_bound = q_forecast[:, 0]
-                        # இறுதி குவாண்ட்டைல் (90th percentile - Upper Boundary)
-                        upper_bound = q_forecast[:, -1]
+                        lower_bound = st.session_state['q_forecast'][:, 0]
+                        upper_bound = st.session_state['q_forecast'][:, -1]
                         
                         st.success('கணிப்பு வெற்றிகரமாக முடிந்தது! 🎉')
                         
@@ -142,21 +139,14 @@ with tab1:
                         fig, ax = plt.subplots(figsize=(12, 6))
                         ax.plot(range(50), plot_historical_prices, label="Historical Data (Last 50)", color="blue", linewidth=2)
                         
-                        # எக்ஸ் மற்றும் ஒய் அச்சுகளை இணைத்தல்
                         connected_x_values = list(range(49, 50 + forecast_length))
                         connected_y_values = [plot_historical_prices[-1]] + list(forecast_values)
-                        
-                        # 🌟 🌟 🌟 FIX: எல்லைக் கோடுகளை இணைத்து நிழலிடுதல் (Fill Between Logic) 🌟 🌟 🌟
                         connected_lower = [plot_historical_prices[-1]] + list(lower_bound)
                         connected_upper = [plot_historical_prices[-1]] + list(upper_bound)
                         
-                        # 1. மையப்புள்ளி கோடு (Forecast Line)
                         ax.plot(connected_x_values, connected_y_values, label=f"TimesFM Forecast (Next {forecast_length})", color='red', linestyle='dashed', marker='o', markersize=4)
-                        
-                        # 2. ரேஞ்ச் ஃபனல் நிழல் (Shaded Uncertainty Band)
                         ax.fill_between(connected_x_values, connected_lower, connected_upper, color='red', alpha=0.12, label="AI Target Range (Confidence Interval)")
                         
-                        # சார்ட்டின் உள்ளே இருக்கும் பாக்ஸ்
                         info_text = (
                             f"Stock: {stock_name.upper()}\n"
                             f"Predicted (IST): {predicted_time_str}\n"
@@ -209,15 +199,27 @@ with tab1:
                     except Exception as e:
                         st.error(f"ஒரு பிழை ஏற்பட்டுள்ளது: {e}")
 
-# ----------------- TAB 2: HISTORY LOG VIEW -----------------
+# ----------------- 🌟 TAB 2: CRASH-PROOF HISTORY LOG VIEW -----------------
 with tab2:
     st.subheader("📜 சேமிக்கப்பட்ட வரலாற்று கணிப்புகள் (Saved Predictions Log)")
     if os.path.isfile(HISTORY_FILE):
-        history_df = pd.read_csv(HISTORY_FILE)
-        st.dataframe(history_df.iloc[::-1], use_container_width=True)
-        
-        if st.button("வரலாற்றை அழிக்கவும் (Clear History Logs)"):
-            os.remove(HISTORY_FILE)
-            st.success("அனைத்து வரலாற்றுப் பதிவுகளும் வெற்றிகரமாக அழிக்கப்பட்டன! பக்கத்தை புதுப்பிக்கவும்.")
+        try:
+            # 🌟 Safe Read: பழைய பார்மேட் கோப்புகள் இருந்தால் கிராஷ் ஆகாமல் தடுக்கும் எரர் ஹேண்ட்லிங்
+            history_df = pd.read_csv(HISTORY_FILE)
+            st.dataframe(history_df.iloc[::-1], use_container_width=True)
+            
+            if st.button("வரலாற்றை அழிக்கவும் (Clear History Logs)", key="clear_normal"):
+                os.remove(HISTORY_FILE)
+                st.success("அனைத்து வரலாற்றுப் பதிவுகளும் வெற்றிகரமாக அழிக்கப்பட்டன! பக்கத்தை புதுப்பிக்கவும்.")
+                st.rerun()
+                
+        except Exception as e:
+            # பழைய வெர்ஷன் மிஸ்மேட்ச் இருந்தால் பயனருக்கு எச்சரிக்கை காட்டி ரீசெட் செய்ய வைக்கும்
+            st.warning("⚠️ முந்தைய பழைய வடிவமைப்பு லாக் ஃபைல் (Old Format Log) கண்டறியப்பட்டுள்ளது. அது புதிய அப்டேட்களுடன் பொருந்தவில்லை.")
+            if st.button("லாக் ஃபைலை ரீசெட் செய்யுங்க பாஸ் (Reset History Log File)"):
+                if os.path.isfile(HISTORY_FILE):
+                    os.remove(HISTORY_FILE)
+                st.success("பழைய ஃபைல் வெற்றிகரமாக நீக்கப்பட்டது! இப்போது நீங்கள் புதிய கணிப்பைத் தொடங்கலாம்.")
+                st.rerun()
     else:
         st.info("இன்னும் எந்த கணிப்பு வரலாறும் சேமிக்கப்படவில்லை.")
